@@ -30,3 +30,17 @@ jobs:
           publish_dir: ./dist
           publish_branch: gh-pages
           keep_files: false
+
+      - name: Configure GitHub Pages site
+        if: success()
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Configuring Pages for $REPO to use gh-pages branch"
+          OWNER=$(echo "$REPO" | cut -d'/' -f1)
+          REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+          curl -s -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/$OWNER/$REPO_NAME/pages \
+            -d '{"source":{"branch":"gh-pages","path":"/"}}' | jq || true
