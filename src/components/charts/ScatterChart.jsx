@@ -44,21 +44,6 @@ const ScatterChart = () => {
       }
     }
 
-    // Cap at 20K rendered points for scatter performance.
-    // Uniform-stride subsampling preserves outlier distribution since outliers
-    // are spread proportionally through the dataset.
-    const MAX_SCATTER_POINTS = 20_000;
-    if (data.length > MAX_SCATTER_POINTS) {
-      const stride = Math.ceil(data.length / MAX_SCATTER_POINTS);
-      const sampledData = [];
-      const sampledTs = [];
-      for (let i = 0; i < data.length; i += stride) {
-        sampledData.push(data[i]);
-        sampledTs.push(timestamps[i]);
-      }
-      return { chartData: sampledData, mappedTimestamps: sampledTs };
-    }
-    
     return { chartData: data, mappedTimestamps: timestamps };
   }, [masterData, timestampColumn, sensorDeletions, sensorA, sensorB]);
 
