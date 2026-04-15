@@ -9,12 +9,14 @@ const TimeSeriesChart = () => {
   const timestampColumn = useAppStore(state => state.timestampColumn);
   const sensorColumns = useAppStore(state => state.sensorColumns);
   const currentStepIndex = useAppStore(state => state.currentStepIndex);
+  // Subscribe to the specific sensor's deletion set only — avoids re-render
+  // when unrelated sensors get deletions committed.
   const sensorDeletions = useAppStore(state => state.sensorDeletions);
   const addPendingDrops = useAppStore(state => state.addPendingDrops);
 
-  const [brushSelection, setBrushSelection] = useState(null); // { indices: [] }
-
+  // Compute activeSensor early so the deletion-set memo stays stable
   const activeSensor = sensorColumns[currentStepIndex];
+  const [brushSelection, setBrushSelection] = useState(null);
 
   // Derive the active dataset for drawing
   const { chartData, mappedTimestamps } = useMemo(() => {
@@ -91,8 +93,12 @@ const TimeSeriesChart = () => {
         symbol: 'circle',
         symbolSize: 2,
         showSymbol: false,
+        // LTTB: ECharts will downsample the rendered points while preserving
+        // the visual shape of the curve.  All original data still lives in
+        // mappedTimestamps for accurate brush-selection mapping.
+        sampling: 'lttb',
         large: true,
-        largeThreshold: 5000,
+        largeThreshold: 2000,
         itemStyle: { color: '#10b981' },
         lineStyle: { width: 1.5, opacity: 0.8 },
         data: chartData

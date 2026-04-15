@@ -1,78 +1,98 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
-import { UploadCloud, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { UploadCloud, CheckCircle2 } from 'lucide-react';
 import useAppStore, { PHASES } from '../store/useAppStore';
 
 const UploadPhase = () => {
   const [isParsing, setIsParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
   const [stats, setStats] = useState(null);
   const fileInputRef = useRef(null);
   const initDataStore = useAppStore(state => state.initData);
   const setPhase = useAppStore(state => state.setPhase);
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = useCallback((e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setIsParsing(true);
+    setParseProgress(0);
+
+    // Accumulators — populated incrementally in chunk callback
+    let headers = null;
+    let timeCol = null;
+    let sensors = null;
+    const missingCounts = {};
+    const allRows = [];
+    let firstRow = null;
+    const fileSizeEstimate = file.size;
+    let bytesProcessed = 0;
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       dynamicTyping: true,
-      worker: true,
-      complete: function(results) {
-        const data = results.data;
-        const headers = results.meta.fields;
-        
-        let timeCol = Object.keys(data[0])[0]; 
-        const lowerHeaders = headers.map(h => h.toLowerCase());
-        const timeIndex = lowerHeaders.findIndex(h => h.includes('time') || h.includes('date'));
-        if (timeIndex !== -1) {
-          timeCol = headers[timeIndex];
+      // worker: false  — intentionally removed.
+      // With worker:true PapaParse must structured-clone the entire parsed
+      // dataset back to the main thread, which for 200K+ rows is slower
+      // than synchronous parsing.  The chunk callback below keeps the
+      // browser responsive without that serialisation overhead.
+      chunk: (results, parser) => {
+        const chunk = results.data;
+        if (!chunk.length) return;
+
+        // Initialise metadata on first chunk
+        if (!headers) {
+          headers = results.meta.fields;
+          const lower = headers.map(h => h.toLowerCase());
+          const tIdx = lower.findIndex(h => h.includes('time') || h.includes('date'));
+          timeCol = tIdx !== -1 ? headers[tIdx] : headers[0];
+          sensors = headers.filter(h => h !== timeCol);
+          sensors.forEach(s => (missingCounts[s] = 0));
         }
 
-        // Calculate Pre-Flight Stats
-        const rowCount = data.length;
-        const sensors = headers.filter(h => h !== timeCol);
-        
-        const missingStats = {};
-        sensors.forEach(s => missingStats[s] = 0);
+        if (!firstRow) firstRow = chunk[0];
 
-        data.forEach(row => {
-          sensors.forEach(s => {
-            if (row[s] === null || row[s] === undefined || row[s] === '') {
-              missingStats[s]++;
-            }
-          });
-        });
+        // Missing-value tally — done here so we avoid a second O(n*m) pass
+        for (let i = 0; i < chunk.length; i++) {
+          const row = chunk[i];
+          allRows.push(row);
+          for (let j = 0; j < sensors.length; j++) {
+            const v = row[sensors[j]];
+            if (v === null || v === undefined || v === '') missingCounts[sensors[j]]++;
+          }
+        }
 
-        // We assume 5 minute intervals. Actual vs Expected calculation could be more complex, 
-        // string parsing depending on date format, but for now we display what we have.
-        
-        const startTimestamp = data[0][timeCol];
-        const endTimestamp = data[data.length - 1][timeCol];
-
+        // Rough progress based on accumulated row count vs file size heuristic
+        bytesProcessed += chunk.length * 50; // ~50 bytes/row estimate
+        setParseProgress(Math.min(95, Math.round((bytesProcessed / fileSizeEstimate) * 100)));
+      },
+      complete: () => {
+        if (!headers || !allRows.length) {
+          setIsParsing(false);
+          return;
+        }
+        const lastRow = allRows[allRows.length - 1];
+        setParseProgress(100);
         setStats({
-          rowCount,
+          rowCount: allRows.length,
           sensors: sensors.length,
           timeCol,
-          start: startTimestamp,
-          end: endTimestamp,
-          missingStats,
+          start: firstRow[timeCol],
+          end: lastRow[timeCol],
+          missingStats: missingCounts,
           rawHeaders: headers,
-          rawData: data
+          rawData: allRows
         });
-
         setIsParsing(false);
       },
-      error: function(error) {
-        console.error("Error parsing CSV: ", error);
+      error: (error) => {
+        console.error('CSV parse error:', error);
         setIsParsing(false);
-        alert("Error parsing the file. Please check the console.");
+        alert('Error parsing the file. Please check the console.');
       }
     });
-  };
+  }, []);
 
   const proceedWith = (phase) => {
     if (!stats) return;
@@ -134,7 +154,18 @@ const UploadPhase = () => {
               borderRadius: '50%', margin: '0 auto 1rem',
               animation: 'spin 1s linear infinite'
             }} />
-            <h3 style={{ animation: 'pulse 2s infinite' }}>Parsing and analyzing your data (this takes seconds using Web Workers)...</h3>
+            <h3 style={{ animation: 'pulse 2s infinite', marginBottom: '1rem' }}>Parsing CSV...</h3>
+            {/* Progress bar */}
+            <div style={{ width: '260px', margin: '0 auto', background: 'var(--border-color)', borderRadius: '999px', height: '6px', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${parseProgress}%`,
+                background: 'linear-gradient(90deg, var(--accent-primary), #10b981)',
+                borderRadius: '999px',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+            <p style={{ marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{parseProgress}% — computing statistics...</p>
             <style>{`
               @keyframes spin { 100% { transform: rotate(360deg); } }
               @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
