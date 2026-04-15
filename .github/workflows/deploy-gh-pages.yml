@@ -1,0 +1,46 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: false
+
+      - name: Configure GitHub Pages site
+        if: success()
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Configuring Pages for $REPO to use gh-pages branch"
+          OWNER=$(echo "$REPO" | cut -d'/' -f1)
+          REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+          curl -s -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/$OWNER/$REPO_NAME/pages \
+            -d '{"source":{"branch":"gh-pages","path":"/"}}' | jq || true
